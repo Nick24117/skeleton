@@ -2,7 +2,11 @@
 
 import os
 import sys
-import gobject
+# TODO: openbmc/openbmc#2994 remove python 2 support
+try:  # python 2
+    import gobject
+except ImportError:  # python 3
+    from gi.repository import GObject as gobject
 import dbus
 import dbus.service
 import dbus.mainloop.glib
@@ -24,54 +28,42 @@ class Inventory(DbusProperties, DbusObjectManager):
 
 
 class InventoryItem(DbusProperties):
-	def __init__(self,bus,name,data):		
-		DbusProperties.__init__(self)
-		dbus.service.Object.__init__(self,bus,name)
+    def __init__(self, bus, name, data):
+        super(InventoryItem, self).__init__(
+            conn=bus,
+            object_path=name)
 
-		self.name = name
-		
-		if (data.has_key('present') == False):
-			data['present'] = 'False'
-		if (data.has_key('fault') == False):
-			data['fault'] = 'False'
-		if (data.has_key('version') == False):
-			data['version'] = ''
+        self.name = name
 
-		self.SetMultiple(INTF_NAME,data)
+        if 'present' not in data:
+            data['present'] = 'False'
+        if 'fault' not in data:
+            data['fault'] = 'False'
+        if 'version' not in data:
+            data['version'] = ''
 
-		## this will load properties from cache
-		PropertyCacher.load(name, INTF_NAME, self.properties)
-		
-	@dbus.service.method(INTF_NAME,
-		in_signature='a{sv}', out_signature='')
-	def update(self,data):
-		self.SetMultiple(INTF_NAME,data)
-		PropertyCacher.save(self.name, INTF_NAME, self.properties)
+        self.SetMultiple(INTF_NAME, data)
 
-	@dbus.service.method(INTF_NAME,
-		in_signature='s', out_signature='')
-	def setPresent(self,present):
-		self.Set(INTF_NAME,'present',present)
-		if (present == "True"):
-			self.Set(INTF_NAME,'present',present)
-		else:
-			data = FRUS[self.name.replace(System.INVENTORY_ROOT,"<inventory_root>")]
-			if (data.has_key('present') == False):
-				data['present'] = 'False'
-			if (data.has_key('fault') == False):
-				data['fault'] = 'False'
-			if (data.has_key('version') == False):
-				data['version'] = ''
-			self.properties[INTF_NAME] = {}
-			self.SetMultiple(INTF_NAME,data)
+        # this will load properties from cache
+        PropertyCacher.load(name, INTF_NAME, self.properties)
 
-		PropertyCacher.save(self.name, INTF_NAME, self.properties)
+    @dbus.service.method(
+        INTF_NAME, in_signature='a{sv}', out_signature='')
+    def update(self, data):
+        self.SetMultiple(INTF_NAME, data)
+        PropertyCacher.save(self.name, INTF_NAME, self.properties)
 
-	@dbus.service.method(INTF_NAME,
-		in_signature='s', out_signature='')
-	def setFault(self,fault):
-		self.Set(INTF_NAME,'fault',fault)
-		PropertyCacher.save(self.name, INTF_NAME, self.properties)
+    @dbus.service.method(
+        INTF_NAME, in_signature='s', out_signature='')
+    def setPresent(self, present):
+        self.Set(INTF_NAME, 'present', present)
+        PropertyCacher.save(self.name, INTF_NAME, self.properties)
+
+    @dbus.service.method(
+        INTF_NAME, in_signature='s', out_signature='')
+    def setFault(self, fault):
+        self.Set(INTF_NAME, 'fault', fault)
+        PropertyCacher.save(self.name, INTF_NAME, self.properties)
 
 
 def getVersion():
@@ -100,7 +92,7 @@ if __name__ == '__main__':
             try:
                 inv = json.load(f)
             except ValueError:
-                print "Invalid JSON detected in " + INVENTORY_FILE
+                print("Invalid JSON detected in " + INVENTORY_FILE)
             else:
                 FRUS = inv
     else:
@@ -110,21 +102,21 @@ if __name__ == '__main__':
         except ImportError:
             pass
 
-    for f in FRUS.keys():
+    for f in list(FRUS.keys()):
         import obmc.inventory
         obj_path = f.replace("<inventory_root>", obmc.inventory.INVENTORY_ROOT)
         obj = InventoryItem(bus, obj_path, FRUS[f])
         obj_parent.add(obj_path, obj)
 
-        ## TODO:  this is a hack to update bmc inventory item with version
-        ## should be done by flash object
+        # TODO:  this is a hack to update bmc inventory item with version
+        # should be done by flash object
         if (FRUS[f]['fru_type'] == "BMC"):
             version = getVersion()
             obj.update({'version': version})
 
     obj_parent.unmask_signals()
     name = dbus.service.BusName(DBUS_NAME, bus)
-    print "Running Inventory Manager"
+    print("Running Inventory Manager")
     mainloop.run()
 
 # vim: tabstop=8 expandtab shiftwidth=4 softtabstop=4

@@ -1,6 +1,10 @@
 #!/usr/bin/env python
 
-import gobject
+# TODO: openbmc/openbmc#2994 remove python 2 support
+try:  # python 2
+    import gobject
+except ImportError:  # python 3
+    from gi.repository import GObject as gobject
 import dbus
 import dbus.service
 import dbus.mainloop.glib
@@ -15,8 +19,8 @@ DBUS_NAME = 'org.openbmc.control.BmcFlash'
 OBJ_NAME = '/org/openbmc/control/flash/bmc'
 DOWNLOAD_INTF = 'org.openbmc.managers.Download'
 
-BMC_DBUS_NAME = 'org.openbmc.control.Bmc'
-BMC_OBJ_NAME = '/org/openbmc/control/bmc0'
+BMC_DBUS_NAME = 'xyz.openbmc_project.State.BMC'
+BMC_OBJ_NAME = '/xyz/openbmc_project/state/bmc0'
 
 UPDATE_PATH = '/run/initramfs'
 
@@ -30,14 +34,16 @@ def doExtract(members, files):
 def save_fw_env():
     fw_env = "/etc/fw_env.config"
     lines = 0
-    files=[]
+    files = []
     envcfg = open(fw_env, 'r')
     try:
         for line in envcfg.readlines():
             # ignore lines that are blank or start with #
-            if (line.startswith("#")): continue
-            if (not len(line.strip())): continue
-            fn = line.partition("\t")[0];
+            if (line.startswith("#")):
+                continue
+            if (not len(line.strip())):
+                continue
+            fn = line.partition("\t")[0]
             files.append(fn)
             lines += 1
     finally:
@@ -45,6 +51,7 @@ def save_fw_env():
     if (lines < 1 or lines > 2 or (lines == 2 and files[0] != files[1])):
             raise Exception("Error parsing %s\n" % fw_env)
     shutil.copyfile(files[0], os.path.join(UPDATE_PATH, "image-u-boot-env"))
+
 
 class BmcFlashControl(DbusProperties, DbusObjectManager):
     def __init__(self, bus, name):
@@ -85,22 +92,22 @@ class BmcFlashControl(DbusProperties, DbusObjectManager):
         self.Set(DBUS_NAME, "filename", filename)
         pass
 
-    ## Signal handler
+    # Signal handler
     def download_error_handler(self, filename):
         if (filename == self.Get(DBUS_NAME, "filename")):
             self.Set(DBUS_NAME, "status", "Download Error")
 
     def download_complete_handler(self, outfile, filename):
-        ## do update
+        # do update
         if (filename != self.Get(DBUS_NAME, "filename")):
             return
 
-        print "Download complete. Updating..."
+        print("Download complete. Updating...")
 
         self.Set(DBUS_NAME, "status", "Download Complete")
         copy_files = {}
 
-        ## determine needed files
+        # determine needed files
         if not self.Get(DBUS_NAME, "update_kernel_and_apps"):
             copy_files["image-bmc"] = True
         else:
@@ -110,20 +117,20 @@ class BmcFlashControl(DbusProperties, DbusObjectManager):
         if self.Get(DBUS_NAME, "restore_application_defaults"):
             copy_files["image-rwfs"] = True
 
-        ## make sure files exist in archive
+        # make sure files exist in archive
         try:
             tar = tarfile.open(outfile, "r")
             files = {}
             for f in tar.getnames():
                 files[f] = True
             tar.close()
-            for f in copy_files.keys():
+            for f in list(copy_files.keys()):
                 if f not in files:
                     raise Exception(
                         "ERROR: File not found in update archive: "+f)
 
         except Exception as e:
-            print e
+            print(str(e))
             self.Set(DBUS_NAME, "status", "Unpack Error")
             return
 
@@ -133,7 +140,7 @@ class BmcFlashControl(DbusProperties, DbusObjectManager):
             tar.close()
 
             if self.Get(DBUS_NAME, "clear_persistent_files"):
-                print "Removing persistent files"
+                print("Removing persistent files")
                 try:
                     os.unlink(UPDATE_PATH+"/whitelist")
                 except OSError as e:
@@ -156,11 +163,11 @@ class BmcFlashControl(DbusProperties, DbusObjectManager):
                         raise
 
             if self.Get(DBUS_NAME, "preserve_network_settings"):
-                print "Preserving network settings"
+                print("Preserving network settings")
                 save_fw_env()
 
         except Exception as e:
-            print e
+            print(str(e))
             self.Set(DBUS_NAME, "status", "Unpack Error")
 
         self.Verify()
@@ -178,7 +185,7 @@ class BmcFlashControl(DbusProperties, DbusObjectManager):
             self.Set(DBUS_NAME, "status", "Image ready to apply.")
             if (self.Get(DBUS_NAME, "auto_apply")):
                 self.Apply()
-        except:
+        except Exception:
             self.Set(DBUS_NAME, "auto_apply", False)
             try:
                 subprocess.check_output([
@@ -218,7 +225,7 @@ class BmcFlashControl(DbusProperties, DbusObjectManager):
         if self.update_process:
             try:
                 self.update_process.kill()
-            except:
+            except Exception:
                 pass
         for file in os.listdir(UPDATE_PATH):
             if file.startswith('image-'):
@@ -285,13 +292,13 @@ class BmcFlashControl(DbusProperties, DbusObjectManager):
                 progress.close()
                 os.unlink(progress.name)
                 self.progress_name = None
-            except:
+            except Exception:
                 pass
             raise
 
         try:
             progress.close()
-        except:
+        except Exception:
             pass
 
     @dbus.service.method(
@@ -310,8 +317,10 @@ class BmcFlashControl(DbusProperties, DbusObjectManager):
             "copy-files-to-ram copy-base-filesystem-to-ram"])
         self.Set(DBUS_NAME, "status", "Switch to update mode in progress")
         o = bus.get_object(BMC_DBUS_NAME, BMC_OBJ_NAME)
-        intf = dbus.Interface(o, BMC_DBUS_NAME)
-        intf.warmReset()
+        intf = dbus.Interface(o, "org.freedesktop.DBus.Properties")
+        intf.Set(BMC_DBUS_NAME,
+                 "RequestedBMCTransition",
+                 "xyz.openbmc_project.State.BMC.Transition.Reboot")
 
 
 if __name__ == '__main__':
@@ -324,7 +333,7 @@ if __name__ == '__main__':
     obj.unmask_signals()
     name = dbus.service.BusName(DBUS_NAME, bus)
 
-    print "Running Bmc Flash Control"
+    print("Running Bmc Flash Control")
     mainloop.run()
 
 # vim: tabstop=8 expandtab shiftwidth=4 softtabstop=4

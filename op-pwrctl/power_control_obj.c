@@ -71,13 +71,11 @@ poll_pgood(gpointer user_data)
 			if(pgood_state == 0)
 			{
 				control_power_emit_power_lost(control_power);
-				control_emit_goto_system_state(control,"HOST_POWERED_OFF");
 				g_pci_reset_held = 1;
 			}
 			else
 			{
 				control_power_emit_power_good(control_power);
-				control_emit_goto_system_state(control,"HOST_POWERED_ON");
 			}
 
 			for(i = 0; i < g_gpio_configs.power_gpio.num_reset_outs; i++)
@@ -267,11 +265,6 @@ on_set_power_state(ControlPower *pwr,
 		do {
 			int i;
 			uint8_t power_up_out;
-			if(state == 1) {
-				control_emit_goto_system_state(control,"HOST_POWERING_ON");
-			} else {
-				control_emit_goto_system_state(control,"HOST_POWERING_OFF");
-			}
 			for (i = 0; i < power_gpio->num_power_up_outs; i++) {
 				GPIO *power_pin = &power_gpio->power_up_outs[i];
 				error = gpio_open(power_pin);
@@ -469,18 +462,21 @@ on_bus_acquired(GDBusConnection *connection,
 
 	if(read_gpios(connection, &g_gpio_configs) != TRUE) {
 		g_print("ERROR PowerControl: could not read power GPIO configuration\n");
+		exit(-1);
 	}
 
 	int rc = set_up_gpio(connection, &g_gpio_configs.power_gpio, control_power);
 	if(rc != GPIO_OK) {
 		g_print("ERROR PowerControl: GPIO setup (rc=%d)\n",rc);
+		exit(-1);
 	}
 	//start poll
 	pgood_timeout_start = 0;
 	int poll_interval = atoi(cmd->argv[1]);
 	int pgood_timeout = atoi(cmd->argv[2]);
-	if(poll_interval < 1000 || pgood_timeout <5) {
-		g_print("ERROR PowerControl: poll_interval < 1000 or pgood_timeout < 5\n");
+	if(poll_interval < 500 || pgood_timeout <5) {
+		g_print("ERROR PowerControl: poll_interval < 500 or pgood_timeout < 5\n");
+		exit(-1);
 	} else {
 		control_set_poll_interval(control,poll_interval);
 		control_power_set_pgood_timeout(control_power,pgood_timeout);

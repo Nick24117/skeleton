@@ -1,15 +1,17 @@
 #!/usr/bin/env python
 
-import gobject
+# TODO: openbmc/openbmc#2994 remove python 2 support
+try:  # python 2
+    import gobject
+except ImportError:  # python 3
+    from gi.repository import GObject as gobject
 import dbus
 import dbus.service
 import dbus.mainloop.glib
 import os
-import obmc.dbuslib.propertycacher as PropertyCacher
 from obmc.dbuslib.bindings import DbusProperties, DbusObjectManager, get_dbus
 import obmc.enums
 import obmc_system_config as System
-import obmc.mapper.utils
 import obmc.inventory
 import obmc.system
 import subprocess
@@ -17,11 +19,6 @@ import subprocess
 DBUS_NAME = 'org.openbmc.managers.System'
 OBJ_NAME = '/org/openbmc/managers/System'
 INTF_SENSOR = 'org.openbmc.SensorValue'
-INTF_ITEM = 'org.openbmc.InventoryItem'
-
-SYS_STATE_FILE = '/var/lib/obmc/last-system-state'
-POWER_OFF = "0"
-
 
 class SystemManager(DbusProperties, DbusObjectManager):
     def __init__(self, bus, obj_name):
@@ -30,21 +27,6 @@ class SystemManager(DbusProperties, DbusObjectManager):
             object_path=obj_name)
         self.bus = bus
 
-        bus.add_signal_receiver(
-            self.NewObjectHandler,
-            signal_name="InterfacesAdded", sender_keyword='bus_name')
-        bus.add_signal_receiver(
-            self.SystemStateHandler, signal_name="GotoSystemState")
-
-        bus.add_signal_receiver(
-            self.chassisPowerStateHandler,
-            dbus_interface="org.freedesktop.DBus.Properties",
-            signal_name="PropertiesChanged",
-            path="/org/openbmc/control/power0")
-
-        self.Set(DBUS_NAME, "current_state", "")
-        self.Set(DBUS_NAME, "system_last_state", POWER_OFF)
-        self.import_system_state_from_disk()
         # replace symbolic path in ID_LOOKUP
         for category in System.ID_LOOKUP:
             for key in System.ID_LOOKUP[category]:
@@ -53,83 +35,19 @@ class SystemManager(DbusProperties, DbusObjectManager):
                     "<inventory_root>", obmc.inventory.INVENTORY_ROOT)
                 System.ID_LOOKUP[category][key] = new_val
 
-        self.SystemStateHandler(System.SYSTEM_STATES[0])
-
-        print "SystemManager Init Done"
-
-    def chassisPowerStateHandler(self, interface_name, changed_properties,
-                                 invalidated_properties):
-        value = changed_properties.get('state')
-        if value is not None:
-            self.write_to_disk_and_update(str(value))
-
-    def SystemStateHandler(self, state_name):
-        print "Running System State: "+state_name
-
-        self.Set(DBUS_NAME, "current_state", state_name)
-
-        waitlist = System.EXIT_STATE_DEPEND.get(state_name, {}).keys()
-        if waitlist:
-            self.waiter = obmc.mapper.utils.Wait(
-                self.bus, waitlist,
-                callback=self.gotoNextState)
-
-    def setGpioD5Blind(self):
-        # turn off the LED once BMC states in READY
-        BASE_GPIO_D = 24
-        cmd_data = subprocess.check_output("devmem 0x1e780000", shell=True).rstrip("\n")
-        value = int(cmd_data, 16)
-        value = value | (1<<(5+BASE_GPIO_D))
-        os.system("devmem 0x1e780000 32 " + hex(value)[:-1])
-
-    def gotoNextState(self):
-        s = 0
-        current_state = self.Get(DBUS_NAME, "current_state")
-        for i in range(len(System.SYSTEM_STATES)):
-            if (System.SYSTEM_STATES[i] == current_state):
-                s = i+1
-
-        if (s == len(System.SYSTEM_STATES)):
-            print "ERROR SystemManager: No more system states"
-        else:
-            new_state_name = System.SYSTEM_STATES[s]
-            print "SystemManager Goto System State: "+new_state_name
-            if new_state_name == "BMC_READY":
-                self.setGpioD5Blind()
-            self.SystemStateHandler(new_state_name)
-
-    def import_system_state_from_disk(self):
-        state = str(POWER_OFF)
-        try:
-            with open(SYS_STATE_FILE, 'r+') as f:
-                state = f.readline().rstrip('\n')
-        except IOError:
-            pass
-        self.Set(DBUS_NAME, "system_last_state", state)
-        return state
-
-    def write_to_disk_and_update(self, state):
-        try:
-            with open(SYS_STATE_FILE, 'w+') as f:
-                f.write(str(state))
-                self.Set(DBUS_NAME, "system_last_state", state)
-        except IOError:
-            pass
-
-    @dbus.service.method(DBUS_NAME, in_signature='', out_signature='s')
-    def getSystemState(self):
-        return self.Get(DBUS_NAME, "current_state")
+        print("SystemManager Init Done")
 
     def doObjectLookup(self, category, key):
         obj_path = ""
-        intf_name = INTF_ITEM
+        intf_name = INTF_SENSOR
         try:
             obj_path = System.ID_LOOKUP[category][key]
             parts = obj_path.split('/')
-            if (parts[3] == 'sensors'):
-                intf_name = INTF_SENSOR
+            if (parts[3] != 'sensors'):
+                print ("ERROR SystemManager: SENSOR only supported type")
+                intf_name = ""
         except Exception as e:
-            print "ERROR SystemManager: "+str(e)+" not found in lookup"
+            print ("ERROR SystemManager: "+str(e)+" not found in lookup")
 
         return [obj_path, intf_name]
 
@@ -243,7 +161,7 @@ class SystemManager(DbusProperties, DbusObjectManager):
         if name not in System.GPIO_CONFIG:
             # TODO: Better error handling
             msg = "ERROR: "+name+" not found in GPIO config table"
-            print msg
+            print(msg)
             raise Exception(msg)
         else:
 
@@ -256,7 +174,7 @@ class SystemManager(DbusProperties, DbusObjectManager):
                     gpio_num = obmc.system.convertGpio(gpio['gpio_pin'])
                 else:
                     msg = "ERROR: SystemManager - GPIO lookup failed for "+name
-                    print msg
+                    print(msg)
                     raise Exception(msg)
 
             if (gpio_num != -1):
@@ -264,7 +182,7 @@ class SystemManager(DbusProperties, DbusObjectManager):
         return r
 
     @dbus.service.method(DBUS_NAME, in_signature='',
-            out_signature='ssa(sb)a(sb)a(sbb)ssssa(sb)')
+                         out_signature='ssa(sb)a(sb)a(sbb)ssssa(sb)')
     def getGpioConfiguration(self):
         power_config = System.GPIO_CONFIGS.get('power_config', {})
         power_good_in = power_config.get('power_good_in', '')
@@ -278,9 +196,10 @@ class SystemManager(DbusProperties, DbusObjectManager):
         fsi_enable = hostctl_config.get('fsi_enable', '')
         cronus_sel = hostctl_config.get('cronus_sel', '')
         optionals = hostctl_config.get('optionals', [])
-        r = [power_good_in, latch_out, power_up_outs, reset_outs, pci_reset_outs,\
-             fsi_data, fsi_clk, fsi_enable, cronus_sel, optionals]
-        print "Power GPIO config: " + str(r)
+        r = [power_good_in, latch_out, power_up_outs, reset_outs,
+             pci_reset_outs, fsi_data, fsi_clk, fsi_enable, cronus_sel,
+             optionals]
+        print("Power GPIO config: " + str(r))
         return r
 
 
@@ -292,7 +211,7 @@ if __name__ == '__main__':
     obj.unmask_signals()
     name = dbus.service.BusName(DBUS_NAME, bus)
 
-    print "Running SystemManager"
+    print("Running SystemManager")
     mainloop.run()
 
 # vim: tabstop=8 expandtab shiftwidth=4 softtabstop=4
