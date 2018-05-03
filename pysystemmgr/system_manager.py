@@ -63,14 +63,18 @@ class SystemManager(DbusProperties, DbusObjectManager):
     @dbus.service.method(DBUS_NAME,
         in_signature='s', out_signature='s')
     def convertHwmonPath(self, path):
-        split_p = path.split(":")
-        if len(split_p) < 2:
-            return ""
-        for dirname, dirnames, filenames in os.walk("/sys/devices/platform/ahb"):
-            if dirname.find(split_p[0])>=0:
+        try:
+            split_p = path.split(":")
+            if len(split_p) < 2:
+                return ""
+            i2c_bus = split_p[0].split("-")[0]
+            hwmon_i2c_path = "/sys/bus/i2c/devices/i2c-%s/%s/hwmon" % (i2c_bus, split_p[0])
+            for dirname, dirnames, filenames in os.walk(hwmon_i2c_path):
                 hwmon_path = dirname + "/" + split_p[1]
                 if os.path.exists(hwmon_path):
                     return hwmon_path
+        except:
+            print "convertHwmonPath Error:" + path
         return ""
 
     @dbus.service.method(DBUS_NAME,

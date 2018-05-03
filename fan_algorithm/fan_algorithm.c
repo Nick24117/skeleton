@@ -790,7 +790,11 @@ static int fan_control_algorithm_monitor(void)
 					NULL);
 		if(rc < 0) {
 			fprintf(stderr, "Failed to get power state from dbus: %s\n", bus_error.message);
-			goto finish;
+			//delay 30s to wait for system ready
+			tv.tv_sec = 30;
+			tv.tv_usec = 0;
+			select(0, NULL, NULL, NULL, &tv);
+			break;
 		}
 
 		rc = sd_bus_message_read(response, "i", &Power_state);
