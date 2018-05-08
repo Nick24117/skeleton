@@ -907,18 +907,6 @@ static int fan_control_algorithm_monitor(void)
 		real_fanspeed = g_FanSpeed;
 		FinalFanSpeed =(int) ((double)g_FanSpeed * 255)/100;
 
-		if (g_fan_para_shm != NULL) {
-			if (FinalFanSpeed < g_fan_para_shm->min_fanspeed) {
-				FinalFanSpeed = g_fan_para_shm->min_fanspeed;
-				real_fanspeed = (double)  g_fan_para_shm->min_fanspeed/100;
-			}
-			else if (FinalFanSpeed > g_fan_para_shm->max_fanspeed) {
-				FinalFanSpeed = g_fan_para_shm->max_fanspeed;
-				real_fanspeed = (double)  g_fan_para_shm->max_fanspeed/100;
-			}
-	    }
-		g_FanSpeed = real_fanspeed;
-
 		int fan_tacho_index = 0;
 		fan_led_port0 = FAN_LED_PORT0_ALL_BLUE;
 		fan_led_port1 = FAN_LED_PORT1_ALL_BLUE;
@@ -969,8 +957,21 @@ static int fan_control_algorithm_monitor(void)
 
 		set_fanled(fan_led_port0,fan_led_port1);
 
-		for(i=0; i<g_SetFanSpeedObjPath.size; i++) {
+		if (g_fan_para_shm != NULL) {
+			if (FinalFanSpeed <= g_fan_para_shm->min_fanspeed)
+				FinalFanSpeed = g_fan_para_shm->min_fanspeed;
+			else if (FinalFanSpeed >= g_fan_para_shm->max_fanspeed)
+				FinalFanSpeed = g_fan_para_shm->max_fanspeed;
+		}
+
+		if (g_fan_para_shm->debug_msg_info_en == 1)
+				printf("[FAN_ALGORITHM]g_SetFanSpeedObjPath size: %d\n", g_SetFanSpeedObjPath.size);
+
+		for(i = 0; i < g_SetFanSpeedObjPath.size; i++) {
 			rc = set_sensor_value_Pwm(g_SetFanSpeedObjPath.path[i], FinalFanSpeed);
+			if (g_fan_para_shm->debug_msg_info_en == 1)
+				printf("[FAN_ALGORITHM]set_sensor_value_Pwm:i=%d, path=%s, FinalFanSpeed=%d, rc=%d\n",
+					i, g_SetFanSpeedObjPath.path[i], FinalFanSpeed, rc);
 			if(rc < 0)
 				fprintf(stderr, "Failed to adjust fan speed  %d:%s\n", i, g_FanSpeedObjPath.path[i]);
 		}
