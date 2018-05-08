@@ -122,8 +122,9 @@ class ChassisControlObject(DbusProperties, DbusObjectManager):
         if self.getPowerState() == POWER_OFF:
             self.powerOn()
         else:
-            self.Set(DBUS_NAME, "reboot", 1)
-            self.powerOff()
+            intf = self.getInterface('systemd')
+            f = getattr(intf, 'StartUnit')
+            f.call_async('phosphor-reboot-host@0.service', 'replace')
         return None
 
     @dbus.service.method(DBUS_NAME,
@@ -134,8 +135,9 @@ class ChassisControlObject(DbusProperties, DbusObjectManager):
             print "The power is off while soft reboot"
         else:
             print "Soft Rebooting"
-            self.Set(DBUS_NAME, "reboot", 1)
-            self.softPowerOff()
+            intf = self.getInterface('systemd')
+            f = getattr(intf, 'StartUnit')
+            f.call_async('obmc-host-reboot@0.target', 'replace')
         return None
 
     @dbus.service.method(DBUS_NAME,
