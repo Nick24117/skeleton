@@ -5,7 +5,8 @@ GDBUS_APPS = bmcctl \
 	     op-pwrctl \
 	     pciedetect \
 	     pwrbutton \
-	     rstbutton
+	     rstbutton \
+	     op-wolctl
 
 SUBDIRS = fanctl \
 	  ledctl \
