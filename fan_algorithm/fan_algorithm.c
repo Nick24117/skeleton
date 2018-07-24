@@ -402,9 +402,6 @@ static int calculate_closeloop(struct st_closeloop_obj_data *sensor_data, double
 		return 0;
 
 	index = sensor_data->index;
-
-	sensor_data->sensor_reading = g_fan_para_shm->closeloop_param[index].closeloop_sensor_reading;
-
 	if (sensor_data->sensor_reading ==0) {
 		pwm_speed = 100;
 		g_closeloop_record[g_closeloop_record_count].cal_speed = 100;
@@ -463,14 +460,6 @@ static int calculate_closeloop(struct st_closeloop_obj_data *sensor_data, double
 		       total_integral_error, sensor_data->last_error, pid_value);
 	//pwm_speed = pid_value + g_FanSpeed;
 
-	if (closeloop_first_time <= 10) {
-		if (current_fanspeed == 100)
-			current_fanspeed = 40;
-		else {
-			closeloop_first_time +=1;
-		}
-	}
-
 	pwm_speed = pid_value + (double) current_fanspeed;
 
 	g_fan_para_shm->closeloop_param[index].pid_value = pid_value;
@@ -501,13 +490,20 @@ static int calculate_closeloop(struct st_closeloop_obj_data *sensor_data, double
 	if (g_Closeloopspeed < pwm_speed)
 		g_Closeloopspeed = pwm_speed;
 
+
+	if (g_fan_para_shm->debug_msg_info_en == 1)
+			printf("%s, %d,  critical_temp:%d, warning_temp:%d, sensor_reading:%d\n", __FUNCTION__, __LINE__,
+			    sensor_data->critical_temp, sensor_data->warning_temp, sensor_data->sensor_reading);
+
 	if (sensor_data->sensor_reading>=sensor_data->critical_temp) {
 		system_shut_down(bus, EM_CLOSELOOP);
 		g_Closeloopspeed = 100;
+		g_closeloop_record[g_closeloop_record_count].cal_speed = 100;
 		if (g_fan_para_shm->debug_msg_info_en == 1)
 			printf("%s, %d, upper Critical !!!! \n", __FUNCTION__, __LINE__);
 	} else if (sensor_data->sensor_reading>=sensor_data->warning_temp) {
 		g_Closeloopspeed = 100;
+		g_closeloop_record[g_closeloop_record_count].cal_speed = 100;
 		if (g_fan_para_shm->debug_msg_info_en == 1)
 			printf("%s, %d, upper Warning !!!! \n", __FUNCTION__, __LINE__);
 	} else {
