@@ -288,9 +288,6 @@ static void add_system_event_thermal_shutdown(sd_bus *bus, enum FAN_ALGO_TYPE fa
 	sd_bus_error bus_error = SD_BUS_ERROR_NULL;
 	sd_bus_message *response = NULL;
 
-	if (g_trigger_system_event != 0) //even trigger thermal shutdown event
-		return ;
-
 	rc = sd_bus_call_method(bus,
 				"xyz.openbmc_project.Logging",
 				"/xyz/openbmc_project/logging/internal/manager",
@@ -310,7 +307,10 @@ static void add_system_event_thermal_shutdown(sd_bus *bus, enum FAN_ALGO_TYPE fa
 	response = sd_bus_message_unref(response);
 }
 
-static void system_shut_down(sd_bus *bus, enum FAN_ALGO_TYPE fan_algo_type) {
+static void system_shut_down(sd_bus *bus, enum FAN_ALGO_TYPE fan_algo_type)
+{
+	if (g_trigger_system_event != 0) //even trigger thermal shutdown event
+		return;
 	add_system_event_thermal_shutdown(bus, fan_algo_type);
 	if (g_fan_para_shm->debug_msg_info_en == 1)
 		printf("system_shut_down to prepare poweroff!!!! \n");
@@ -499,11 +499,13 @@ static int calculate_closeloop(struct st_closeloop_obj_data *sensor_data, double
 		system_shut_down(bus, EM_CLOSELOOP);
 		g_Closeloopspeed = 100;
 		g_closeloop_record[g_closeloop_record_count].cal_speed = 100;
+		g_fan_para_shm->closeloop_param[index].closeloop_speed = 100;
 		if (g_fan_para_shm->debug_msg_info_en == 1)
 			printf("%s, %d, upper Critical !!!! \n", __FUNCTION__, __LINE__);
 	} else if (sensor_data->sensor_reading>=sensor_data->warning_temp) {
 		g_Closeloopspeed = 100;
 		g_closeloop_record[g_closeloop_record_count].cal_speed = 100;
+		g_fan_para_shm->closeloop_param[index].closeloop_speed = 100;
 		if (g_fan_para_shm->debug_msg_info_en == 1)
 			printf("%s, %d, upper Warning !!!! \n", __FUNCTION__, __LINE__);
 	} else {
@@ -780,6 +782,8 @@ static int get_max_sensor_reading(sd_bus *bus, struct st_fan_obj_path_info *fan_
 		}
 	}
 	present_group_status = check_present_group_status(fan_obj);
+	if (present_group_status == 0)
+		return -1;
 	for(i=0; i < fan_obj->size; i++) {
 		if (fan_obj->flag_sensor_reading_from_device_node == 1)
 			rc = get_sensor_reading_file(fan_obj->path[i], &sensor_reading);
@@ -788,8 +792,6 @@ static int get_max_sensor_reading(sd_bus *bus, struct st_fan_obj_path_info *fan_
 		if (rc >= 0)
 			max_value = (max_value < sensor_reading)? sensor_reading : max_value;
 	}
-	if (max_value == 0 && present_group_status == 0)
-		return -1;
 	return max_value;
 }
 
@@ -1306,12 +1308,11 @@ static int initial_fan_config(sd_bus *bus)
 		t_fan_obj->present_group_count = 0;
 		if (strcmp(response_data[0], "OCC_DEVICE") == 0) {
 			t_fan_obj->size = 0;
-			for (i = 1; i < response_len; i+=3, t_fan_obj->occ_size+=1) {
+			for (i = 1; i < response_len; i++, t_fan_obj->occ_size++, t_fan_obj->size++) {
 				struct st_occ_obj_data *ptr_occ_data = &t_fan_obj->occ_data[t_fan_obj->occ_size];
 				strncpy(ptr_occ_data->occ_dev_path, response_data[i], MAX_PATH_LEN);
-				ptr_occ_data->occ_dev_checked = 0;
-				ptr_occ_data->min_occ_sensor_number = atoi(response_data[i+1]);
-				ptr_occ_data->max_occ_sensor_number = atoi(response_data[i+2]);
+				ptr_occ_data->occ_dev_checked = 1;
+				strncpy(t_fan_obj->path[t_fan_obj->size], response_data[i], MAX_PATH_LEN);
 			}
 			t_fan_obj->flag_sensor_reading_from_device_node = 1;
 		} else if (strcmp(response_data[0], "SENSORS_DEVICE_NODE") == 0) {
