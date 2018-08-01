@@ -14,8 +14,8 @@
 #define I2C_CLIENT_PEC          0x04    /* Use Packet Error Checking */
 #define I2C_M_RECV_LEN          0x0400  /* length will be first received byte */
 
-#define MAX_PATH_LEN 200
-#define MAX_SENSOR_NUM 70
+#define MAX_PATH_LEN 150
+#define MAX_SENSOR_NUM 20
 #define SAMPLING_N  20
 #define OCC_MAX_NUM 2
 
@@ -31,6 +31,8 @@
 #define MAX_SENSOR_READING_RETRY (3)
 #define FAN_PWM_MULTIPLIER (1.5)
 #define DBUS_MAX_NAME_LEN (256)
+#define MAX_RETRY_TRIGGER_FAN_RPM_EVENT (10)
+#define AUX_FAN_DUTY (128)
 
 
 struct st_closeloop_obj_data {
@@ -311,6 +313,7 @@ static void system_shut_down(sd_bus *bus, enum FAN_ALGO_TYPE fan_algo_type)
 {
 	if (g_trigger_system_event != 0) //even trigger thermal shutdown event
 		return;
+	printf("[FAN_ALGORITHM][%s, %d]system_shut_down to prepare poweroff!!!! \n", __FUNCTION__, __LINE__);
 	add_system_event_thermal_shutdown(bus, fan_algo_type);
 	if (g_fan_para_shm->debug_msg_info_en == 1)
 		printf("system_shut_down to prepare poweroff!!!! \n");
@@ -903,20 +906,18 @@ static int fan_control_algorithm_monitor(void)
 	sd_bus_message *response = NULL;
 	int rc = 0, i = 0;
 	int fan_tacho_rpm, FinalFanSpeed = 255;
-	int Power_state = 0, fan_led_port0 = 0xFF, fan_led_port1 = 0xFF;
+	int power_state = 0, fan_led_port0 = 0xFF, fan_led_port1 = 0xFF;
 	char fan_presence[MAX_SENSOR_NUM] = {0}, fan_presence_previous[MAX_SENSOR_NUM] = {0};
 	struct st_fan_obj_path_info *t_header = NULL;
 	struct st_closeloop_obj_data *t_closeloop_data = NULL;
 	int closeloop_reading = 0, openloop_reading = 0;
 	int current_fanspeed = 0;
 	int first_time_set = 0;
-	char *ptr_temp_fan_bus = NULL, *ptr_temp_fan_intf= NULL;
 	uint8_t fan_failure_counter = 0;
 	char fan_failure[MAX_SENSOR_NUM] = {0};
 	int t_reading;
-	struct timeval tv;
-
 	double real_fanspeed = 0.0;
+
 	do {
 		/* Connect to the user bus this time */
 		rc = sd_bus_open_system(&bus);
@@ -949,13 +950,14 @@ static int fan_control_algorithm_monitor(void)
 		if(rc < 0) {
 			fprintf(stderr, "Failed to get power state from dbus: %s\n", bus_error.message);
 			//delay 30s to wait for system ready
+			struct timeval tv;
 			tv.tv_sec = 30;
 			tv.tv_usec = 0;
 			select(0, NULL, NULL, NULL, &tv);
 			break;
 		}
 
-		rc = sd_bus_message_read(response, "i", &Power_state);
+		rc = sd_bus_message_read(response, "i", &power_state);
 		if (rc < 0 ) {
 			fprintf(stderr, "Failed to parse GetPowerState response message:[%s]\n", strerror(-rc));
 			goto finish;
@@ -963,8 +965,8 @@ static int fan_control_algorithm_monitor(void)
 		sd_bus_error_free(&bus_error);
 		response = sd_bus_message_unref(response);
 
-		g_fan_para_shm->current_power_state = Power_state;
-		if (Power_state == 0) // Aux Condition
+		g_fan_para_shm->current_power_state = power_state;
+		if (power_state == 0) // Aux Condition
 			g_trigger_system_event = 0; //Reset system event flag for next dc on system event
 
 		current_fanspeed = get_max_sensor_reading(bus, &g_FanSpeedObjPath);
@@ -1076,23 +1078,33 @@ static int fan_control_algorithm_monitor(void)
 			if (fan_tacho_rpm > 0)
 				fan_presence[fan_tacho_index/2] = 1;
 
-			if (Power_state == 0) { //AUX condition
-				if (fan_tacho_rpm <= g_fanled_aux_limit) {
+			if (g_fan_para_shm->debug_msg_info_en == 1)
+				printf("[FAN_ALGORITHM]%s: %d, fan_tacho_index:%d, Power_state:%d, fan_tacho_rpm:%d\n", __FUNCTION__, __LINE__, 
+				fan_tacho_index, g_fan_para_shm->current_power_state, fan_tacho_rpm);
+
+			if (g_fan_para_shm->current_power_state == 0) { //AUX condition
+				if (g_fanled_aux_limit == -1)
 					set_fan_led_as_red(fan_tacho_index, &fan_led_port0, &fan_led_port1);
-					fan_failure[fan_tacho_index] = 1;
+				if (fan_tacho_rpm <= g_fanled_aux_limit && current_fanspeed > 0) {
+					if (fan_failure[fan_tacho_index] < MAX_RETRY_TRIGGER_FAN_RPM_EVENT)
+						fan_failure[fan_tacho_index] += 1;
+					else
+						set_fan_led_as_red(fan_tacho_index, &fan_led_port0, &fan_led_port1);
 				} else {
 					fan_failure[fan_tacho_index] = 0;
 				}
-			} else if (Power_state == 1) { //Power on condition
-				if(fan_tacho_rpm <= g_fanled_limit) {
-					set_fan_led_as_red(fan_tacho_index, &fan_led_port0, &fan_led_port1);
-					fan_failure[fan_tacho_index] = 1;
+			} else if (g_fan_para_shm->current_power_state == 1) { //Power on condition
+				if(fan_tacho_rpm <= g_fanled_limit && current_fanspeed > 0) {
+					if (fan_failure[fan_tacho_index] < MAX_RETRY_TRIGGER_FAN_RPM_EVENT)
+						fan_failure[fan_tacho_index] += 1;
+					else
+						set_fan_led_as_red(fan_tacho_index, &fan_led_port0, &fan_led_port1);
 				} else {
 					fan_failure[fan_tacho_index] = 0;
 				}
 			}
 			/* Using fan_failure to determine if fan tacho is lower then threshold */
-			add_fan_rpm_event(bus, fan_tacho_index, fan_failure[fan_tacho_index]);
+			add_fan_rpm_event(bus, fan_tacho_index, (fan_failure[fan_tacho_index] >= MAX_RETRY_TRIGGER_FAN_RPM_EVENT));
 		}
 
 		/*
@@ -1100,7 +1112,7 @@ static int fan_control_algorithm_monitor(void)
 		Number of fan will be half of g_FanModuleObjPath size
 		*/
 		for(fan_tacho_index = 0; fan_tacho_index < g_FanInputObjPath.size; fan_tacho_index += 2)
-			if (fan_failure[fan_tacho_index] == 1 || fan_failure[fan_tacho_index+1] == 1)
+			if (fan_failure[fan_tacho_index] >= MAX_RETRY_TRIGGER_FAN_RPM_EVENT || fan_failure[fan_tacho_index+1] >= MAX_RETRY_TRIGGER_FAN_RPM_EVENT)
 				fan_failure_counter += 1;
 
 
@@ -1117,6 +1129,12 @@ static int fan_control_algorithm_monitor(void)
 			FinalFanSpeed = 255;
 
 		set_fanled(fan_led_port0,fan_led_port1);
+
+		if (g_fan_para_shm->current_power_state == 0) { //AUX condition to set Fan duty as AUX_FAN_DUTY
+			FinalFanSpeed = AUX_FAN_DUTY;
+			if (g_fan_para_shm->debug_msg_info_en == 1)
+				printf("[FAN_ALGORITHM] %s %d, Force Stop Fan Duty as %d on AUX condition\n", __FUNCTION__, __LINE__, FinalFanSpeed);
+		}
 
 		if (g_fan_para_shm != NULL) {
 			if (FinalFanSpeed <= g_fan_para_shm->min_fanspeed)
@@ -1162,12 +1180,6 @@ finish:
 		sd_bus_flush(bus);
 		memcpy(fan_presence_previous, fan_presence, sizeof(fan_presence));
 		memset(fan_presence, 0, sizeof(fan_presence));
-		#if 0
-		//delay 200ms
-		tv.tv_sec = 0;
-		tv.tv_usec = 200 * 1000;
-		select(0, NULL, NULL, NULL, &tv);
-		#endif
 	}
 	bus = sd_bus_flush_close_unref(bus);
 	freeall_fan_obj(&g_Closeloop_Header);
