@@ -71,7 +71,8 @@ class Gpio:
 			self.write(self.getPath('value'),'1')
 		else:
 			raise Exception("ERROR - Invalid value: "+value)
-	
+		temp = self.read(self.getPath('value'))
+		print "[DEBUGMSG] read value : %s " % temp 
 	def getValue(self):
 		return self.read(self.getPath('value'))
 
@@ -115,8 +116,10 @@ if __name__ == '__main__':
 			direction = arg
  		elif opt in ("-v"):
 			value = arg
+			print "[DEBUGMSG] value : %s" % value
 		elif opt in ("-p"):
 			gpio_name = obmc.system.convertGpio(arg)
+			print "[DEBUGMSG] gpio_name : %s" % arg
 		elif opt in ("-l"):
 			gpio_name = obmc.system.convertGpio(arg)
 			print gpio_name
